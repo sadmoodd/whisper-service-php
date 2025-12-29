@@ -10,7 +10,7 @@ app = Flask(__name__)
 model = whisper.load_model("base")
 
 
-@app.route('/transcribe', methods=['POST'])
+@app.route('/api/transcribe', methods=['POST'])
 def transcribe_audio():
     start = time.time()
     if 'file' not in request.files:
@@ -50,6 +50,9 @@ def transcribe_audio():
 
     return jsonify({"error": "Invalid request"}), 400
 
+@app.route('/api/health', methods=["GET"])
+def health_check():
+    return jsonify({"status": "ok", "message": "API is OK!"}, 200)
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)
