@@ -16,6 +16,14 @@ class WhisperController extends Controller
         return view('index');
     }
 
+    public function about(){
+        return view('about');
+    }
+
+    public function help(){
+        return view('help');
+    }
+
     public function transcribe(Request $request)
     {
         // Валидация аудио файла
