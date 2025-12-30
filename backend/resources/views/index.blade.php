@@ -266,7 +266,7 @@
                     } catch (error) {
                         console.error('Health check failed:', error);
                         this.healthIcon.className = 'bi bi-circle-fill text-danger fs-5 me-2';
-                        this.healthStatus.textContent = '❌ Laravel недоступен';
+                        this.healthStatus.textContent = '❌ Сервис недоступен';
                         this.healthDetails.textContent = 'Проверьте сервер';
                     } finally {
                         document.getElementById('healthSpinner').classList.add('d-none');

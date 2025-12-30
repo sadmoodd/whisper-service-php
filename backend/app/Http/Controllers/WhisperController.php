@@ -33,7 +33,7 @@ class WhisperController extends Controller
 
         try {
             // Отправляем в Python API
-            $response = Http::timeout(120) // 2 минуты таймаут
+            $response = Http::timeout(3600) // 2 минуты таймаут
                 ->attach('file', file_get_contents(Storage::path($diskPath)), $originalName)
                 ->post(self::WHISPER_API_URL);
 
