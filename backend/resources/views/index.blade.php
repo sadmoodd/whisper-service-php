@@ -68,8 +68,14 @@
         border: 1px solid rgba(40,167,69,0.3);
     }
 
-    .health-status.warning { background: linear-gradient(135deg, rgba(255,193,7,0.1), rgba(255,152,0,0.1)); border-color: rgba(255,193,7,0.3); }
-    .health-status.danger { background: linear-gradient(135deg, rgba(220,53,69,0.1), rgba(255,102,102,0.1)); border-color: rgba(220,53,69,0.3); }
+    .health-status.warning { 
+        background: linear-gradient(135deg, rgba(255,193,7,0.1), rgba(255,152,0,0.1)); 
+        border-color: rgba(255,193,7,0.3); 
+    }
+    .health-status.danger { 
+        background: linear-gradient(135deg, rgba(220,53,69,0.1), rgba(255,102,102,0.1)); 
+        border-color: rgba(220,53,69,0.3); 
+    }
 
     .custom-file-upload {
         position: relative;
@@ -103,15 +109,30 @@
         font-size: 1rem; color: #6c757d; font-weight: 500;
     }
 
-    .btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none !important; }
-    .progress { height: 12px; border-radius: 10px; background: rgba(0,0,0,0.1); overflow: hidden; }
+    .btn:disabled { 
+        opacity: 0.6; 
+        cursor: not-allowed; 
+        transform: none !important; 
+    }
+    .progress { 
+        height: 12px; 
+        border-radius: 10px; 
+        background: rgba(0,0,0,0.1); 
+        overflow: hidden; 
+    }
 
-    #transcriptionText {
-        font-size: 1.15rem; line-height: 1.7;
-        white-space: pre-wrap; word-wrap: break-word;
+    #summaryText, #transcriptionText {
+        font-size: 1.15rem; 
+        line-height: 1.7;
+        white-space: pre-wrap; 
+        word-wrap: break-word;
         font-family: 'Georgia', serif;
         background: linear-gradient(135deg, #f8f9ff, #f0f2ff);
         border: 1px solid rgba(13,110,253,0.2);
+        min-height: 200px;
+        max-height: 500px;
+        overflow-y: auto;
+        margin-bottom: 1.5rem;
     }
 
     .stats-card {
@@ -124,7 +145,9 @@
         to { opacity: 1; transform: translateY(0); }
     }
 
-    .fade-in-up { animation: fadeInUp 0.6s ease-out; }
+    .fade-in-up { 
+        animation: fadeInUp 0.6s ease-out; 
+    }
 </style>
 @endsection
 
@@ -187,7 +210,7 @@
                         </div>
                         <div class="form-text mt-3">
                             <i class="bi bi-info-circle-fill me-2 text-info"></i>
-                            Поддерживаемые форматы: MP3, WAV, WebM, M4A, FLAC. Максимум 50MB
+                            Поддерживаемые форматы: MP3, WAV, WebM, M4A, FLAC. Максимум 100MB
                         </div>
                     </div>
 
@@ -236,19 +259,32 @@
                     <div class="card-body p-5">
                         <div class="row g-5">
                             <div class="col-lg-8">
+                                <!-- SUMMARY -->
                                 <label class="form-label fw-bold fs-3 mb-4 d-block">
-                                    <i class="bi bi-card-text text-primary me-2"></i>Распознанный текст:
+                                    <i class="bi bi-file-earmark-text text-success me-2"></i>Summary (аннотированный):
                                 </label>
-                                <div class="border rounded-4 p-5 mb-4" id="transcriptionText" 
-                                     style="min-height: 200px; max-height: 500px; overflow-y: auto;">
-                                    Результат появится здесь...
+                                <div class="border rounded-4 p-5 mb-4" id="summaryText">
+                                    Результат summary появится здесь...
                                 </div>
+
+                                <!-- СЫРОЙ ТЕКСТ -->
+                                <label class="form-label fw-bold fs-3 mb-4 d-block">
+                                    <i class="bi bi-file-text text-primary me-2"></i>Сырая транскрипция:
+                                </label>
+                                <div class="border rounded-4 p-5 mb-4" id="transcriptionText">
+                                    Сырая транскрипция появится здесь...
+                                </div>
+
+                                <!-- 4 КНОПКИ -->
                                 <div class="d-flex gap-3 flex-wrap">
                                     <button class="btn btn-outline-primary btn-lg px-4" id="copyBtn">
-                                        <i class="bi bi-copy me-2"></i>Скопировать
+                                        <i class="bi bi-copy me-2"></i>Скопировать Summary
                                     </button>
-                                    <button class="btn btn-outline-success btn-lg px-4" id="downloadBtn">
-                                        <i class="bi bi-download me-2"></i>Скачать TXT
+                                    <button class="btn btn-outline-success btn-lg px-4" id="downloadRawBtn">
+                                        <i class="bi bi-download me-2"></i>📄 Скачать сырой текст
+                                    </button>
+                                    <button class="btn btn-outline-success btn-lg px-4" id="downloadSumBtn">
+                                        <i class="bi bi-download me-2"></i>📋 Скачать Summary
                                     </button>
                                     <button class="btn btn-outline-secondary btn-lg px-4" id="newTranscribe">
                                         <i class="bi bi-plus-circle me-2"></i>Новый файл
@@ -325,8 +361,9 @@ class WhisperTranscriber {
         this.form.addEventListener('submit', (e) => this.handleSubmit(e));
         this.audioInput.addEventListener('change', (e) => this.handleFileSelect(e));
         document.getElementById('clearFile').addEventListener('click', () => this.clearFile());
-        document.getElementById('copyBtn').addEventListener('click', () => this.copyText());
-        document.getElementById('downloadBtn').addEventListener('click', () => this.downloadText());
+        document.getElementById('copyBtn').addEventListener('click', () => this.copySummary());
+        document.getElementById('downloadRawBtn').addEventListener('click', () => this.downloadRawText());
+        document.getElementById('downloadSumBtn').addEventListener('click', () => this.downloadSummaryText());
         document.getElementById('backBtn').addEventListener('click', () => this.resetForm());
         document.getElementById('newTranscribe')?.addEventListener('click', () => this.resetForm());
     }
@@ -334,7 +371,7 @@ class WhisperTranscriber {
     async checkHealth() {
         try {
             document.getElementById('healthSpinner').classList.remove('d-none');
-                        const response = await fetch('/api/health');
+            const response = await fetch('/api/health');
             const data = await response.json();
             
             this.healthCard.className = 'card glass-card mb-5 health-status fade-in-up';
@@ -369,8 +406,8 @@ class WhisperTranscriber {
         const file = e.target.files[0];
         if (!file) return;
 
-        if (file.size > 50 * 1024 * 1024) {
-            alert('❌ Файл слишком большой! Максимум 50MB.');
+        if (file.size > 100 * 1024 * 1024) {
+            alert('❌ Файл слишком большой! Максимум 100MB.');
             this.audioInput.value = '';
             this.disableSubmitButton();
             return;
@@ -379,7 +416,6 @@ class WhisperTranscriber {
         document.getElementById('fileName').textContent = file.name;
         document.getElementById('fileSize').textContent = this.formatFileSize(file.size);
         this.filePreview.classList.remove('d-none');
-
         this.enableSubmitButton();
     }
 
@@ -433,10 +469,11 @@ class WhisperTranscriber {
                 setTimeout(() => { 
                     progressBar.style.width = '100%';
                     setTimeout(() => {
-                        document.getElementById('transcriptionText').textContent = data.transcription;
+                        document.getElementById('summaryText').textContent = data.summary || 'Summary недоступен';
+                        document.getElementById('transcriptionText').textContent = data.transcription || 'Транскрипция недоступна';
                         document.getElementById('processingTime').textContent = data.processing_time + 'с';
                         document.getElementById('wordsPerSec').textContent = (data.stats?.words_per_second || 0).toFixed(1);
-                        document.getElementById('fileSegments').textContent = data.stats?.segments_count || 1;
+                        document.getElementById('fileSegments').textContent = data.stats?.segments_count || 0;
                         document.getElementById('fileNameResult').textContent = data.filename;
                         
                         this.resultSection.classList.remove('d-none');
@@ -462,8 +499,8 @@ class WhisperTranscriber {
         this.disableSubmitButton();
     }
 
-    copyText() {
-        navigator.clipboard.writeText(document.getElementById('transcriptionText').textContent).then(() => {
+    copySummary() {
+        navigator.clipboard.writeText(document.getElementById('summaryText').textContent).then(() => {
             const btn = document.getElementById('copyBtn');
             const original = btn.innerHTML;
             btn.innerHTML = '<i class="bi bi-check-lg me-2 text-success"></i>Скопировано!';
@@ -477,13 +514,34 @@ class WhisperTranscriber {
         });
     }
 
-    downloadText() {
+    downloadRawText() {
         const text = document.getElementById('transcriptionText').textContent;
+        if (!text || text === 'Транскрипция недоступна') {
+            alert('Сырая транскрипция недоступна');
+            return;
+        }
         const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'transcription.txt';
+        a.download = 'raw_transcription.txt';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    downloadSummaryText() {
+        const text = document.getElementById('summaryText').textContent;
+        if (!text || text === 'Summary недоступен') {
+            alert('Summary недоступен');
+            return;
+        }
+        const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'summary.txt';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);

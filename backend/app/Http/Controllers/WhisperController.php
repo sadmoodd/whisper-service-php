@@ -23,60 +23,50 @@ class WhisperController extends Controller
     public function help(){
         return view('help');
     }
+// WhisperController.php - ИСПРАВЬТЕ transcribe() метод:
+public function transcribe(Request $request) {
+    $request->validate([
+        'audio' => 'required|file|mimes:mp3,wav,webm,m4a,flac|max:102400'
+    ]);
 
-    public function transcribe(Request $request)
-    {
-        // Валидация аудио файла
-        $request->validate([
-            'audio' => 'required|file|mimes:mp3,wav,webm,m4a|max:1000000' // 10MB max
-        ]);
+    $audioFile = $request->file('audio');
+    $fileName = Str::uuid() . '.' . $audioFile->getClientOriginalExtension();
+    $diskPath = $audioFile->storeAs('whisper', $fileName, 'local');
 
-        $audioFile = $request->file('audio');
-        $originalName = $audioFile->getClientOriginalName();
-        $fileName = Str::uuid() . '.' . $audioFile->getClientOriginalExtension();
-        $filePath = 'whisper/' . $fileName;
+    try {
+        $response = Http::timeout(1800)
+            ->attach('file', file_get_contents(Storage::path($diskPath)), $audioFile->getClientOriginalName())
+            ->post(self::WHISPER_API_URL);
 
-        // Сохраняем файл временно
-        $diskPath = $audioFile->storeAs('whisper', $fileName, 'local');
+        Storage::disk('local')->delete($diskPath);
 
-        try {
-            // Отправляем в Python API
-            $response = Http::timeout(3600) // 2 минуты таймаут
-                ->attach('file', file_get_contents(Storage::path($diskPath)), $originalName)
-                ->post(self::WHISPER_API_URL);
-
-            // Удаляем временный файл
-            Storage::disk('local')->delete($diskPath);
-
-            if ($response->successful()) {
-                $data = $response->json();
-                
-                return response()->json([
-                    'success' => true,
-                    'transcription' => $data['transcription'] ?? '',
-                    'filename' => $originalName,
-                    'stats' => $data['stats'] ?? [],
-                    'processing_time' => $data['stats']['total_processing_time'] ?? 0
-                ]);
-            }
-
-            return response()->json([
-                'success' => false,
-                'error' => 'Whisper API error',
-                'message' => $response->body()
-            ], 502);
-
-        } catch (\Exception $e) {
-            // Удаляем файл при ошибке
-            Storage::disk('local')->delete($diskPath);
-            
-            return response()->json([
-                'success' => false,
-                'error' => 'Service unavailable',
-                'message' => $e->getMessage()
-            ], 503);
+        if ($response->successful()) {
+            $data = $response->json();
+            return response()->json([  // ✅ ПРАВИЛЬНЫЕ ключи для JS!
+                'success' => true,
+                'transcription' => $data['transcription'] ?? '',     // ✅ JS ожидает ТУТ
+                'summary' => $data['summary'] ?? '',                 // ✅ JS ожидает ТУТ
+                'filename' => $data['filename'] ?? $audioFile->getClientOriginalName(),
+                'processing_time' => $data['stats']['total_processing_time'] ?? 0,  // ✅ JS ожидает
+                'stats' => $data['stats'] ?? []
+            ]);
         }
+
+        return response()->json([
+            'success' => false,
+            'error' => 'Whisper API error: ' . $response->status()
+        ], 502);
+
+    } catch (\Exception $e) {
+        Storage::disk('local')->delete($diskPath);
+        logger()->error('Whisper error: ' . $e->getMessage());
+        return response()->json([
+            'success' => false,
+            'error' => 'Сервис недоступен',
+            'message' => $e->getMessage()
+        ], 503);
     }
+}
 
     public function health()
     {

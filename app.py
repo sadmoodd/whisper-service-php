@@ -1,49 +1,42 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import whisper
 import os
 import time
-import asyncio
 import tempfile
+import requests
+import logging
 from pydub import AudioSegment
-from concurrent.futures import ThreadPoolExecutor
+from dotenv import load_dotenv
 import uvicorn
-import torch
-import gc
 
+logging.basicConfig(level=logging.INFO, filename="whisper.log",
+                    format="%(asctime)s | %(levelname)s | %(message)s")
+logger = logging.getLogger(__name__)
+
+load_dotenv()
 
 app = FastAPI(title="Whisper AI API", version="2.0")
 
-
-# 🔥 БЕЗОПАСНАЯ ИНИЦИАЛИЗАЦИЯ GPU/CPU
-def init_model():
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
-    
-    if torch.cuda.is_available():
-        capability = torch.cuda.get_device_capability(0)
-        print(f"🎮 GPU: {torch.cuda.get_device_name(0)} (capability {capability[0]}.{capability[1]})")
-        
-        # GTX 1070 = 6.1, используем base + оптимизации
-        device = "cuda"
-        model_size = "base" 
-        os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    else:
-        device = "cpu"
-        model_size = "base"
-    
-    print(f"🚀 Загружаем {model_size} на {device}")
-    model = whisper.load_model(model_size, device=device)
-    print("✅ Модель готова!")
-    return model
+API_URL = "https://router.huggingface.co/v1/chat/completions"
+headers = {
+    "Authorization": f"Bearer {os.getenv('HF_TOKEN')}",
+}
 
 
-# Инициализация модели
-model = init_model()
-executor = ThreadPoolExecutor(max_workers=1)  # 1 worker = нет OOM
+def query(payload):
+    """Безопасный запрос к LLM"""
+    try:
+        response = requests.post(API_URL, headers=headers, json=payload, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]['content'].strip()
+    except Exception as e:
+        logger.error(f"LLM query failed: {e}")
+        return "Ошибка суммаризации"
 
-
-# CORS для Laravel
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=True,
@@ -51,168 +44,131 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-@app.middleware("http")
-async def check_request_size(request: Request, call_next):
-    body = await request.body()
-    max_size = 250 * 1024 * 1024
-    if len(body) > max_size:
-        raise HTTPException(status_code=413, detail="Request too large")
-    return await call_next(request)
-
+# Модель (fp16=False для стабильности)
+model = whisper.load_model("base")
 
 async def transcribe_chunk_async(chunk_path: str, chunk_idx: int):
-    """🔥 СТАБИЛЬНАЯ транскрибация с очисткой памяти"""
-    loop = asyncio.get_event_loop()
-    
-    def transcribe_safe():
-        try:
-            # Оптимизации для GTX 1070
-            result = model.transcribe(
-                chunk_path, 
-                fp16=torch.cuda.is_available(),  # fp16 только на GPU
-                language="ru",  
-                temperature=0.0  # Детерминизм
-            )
-            return {
-                "text": result["text"].strip(),
-                "segments": len(result["segments"]) if result["segments"] else 0
-            }
-        except Exception as e:
-            print(f"❌ Чанк {chunk_idx}: {e}")
-            return {"text": "", "segments": 0}
-        finally:
-            # 🔥 КРИТИЧНО: очистка после каждого чанка
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-            gc.collect()
-    
-    result = await loop.run_in_executor(executor, transcribe_safe)
-    return result
-
+    """Безопасная транскрибация чанка"""
+    try:
+        result = model.transcribe(chunk_path)
+        return {
+            "text": result["text"].strip(),
+            "segments": len(result.get("segments", []))
+        }
+    except Exception as e:
+        logger.error(f"Chunk {chunk_idx} error: {e}")
+        return {"text": "", "segments": 0}
 
 @app.post("/api/transcribe")
 async def transcribe_audio(file: UploadFile = File(...)):
+    logger.info("Запрос получен - обработка начата...")
     start = time.time()
     
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file selected")
     
-    if file.size > 250 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large (max 250MB)")
+    if file.size > 100 * 1024 * 1024:  # 100MB
+        raise HTTPException(status_code=400, detail="File too large")
     
     original_filename = file.filename
     file_ext = original_filename.split('.')[-1].lower()
     
-    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as tmp:
-        original_filepath = tmp.name
-    
-    chunk_paths = []
-    
-    try:
-        # Сохраняем файл
+    # 🔥 TemporaryDirectory - автоочистка!
+    with tempfile.TemporaryDirectory() as tmpdir:
+        original_filepath = os.path.join(tmpdir, f"original.{file_ext}")
+        
+        # Сохраняем оригинал
         content = await file.read()
         with open(original_filepath, "wb") as f:
             f.write(content)
         
         file_size = os.path.getsize(original_filepath)
-        audio = AudioSegment.from_file(original_filepath)
         
-        # 🔥 БОЛЬШИЕ ЧАНКИ = МЕНЬШЕ OOM
-        chunk_length_ms = 60 * 1000  # 60 сек вместо 30
-        
-        chunks = []
-        for i in range(0, len(audio), chunk_length_ms):
-            chunk = audio[i:i + chunk_length_ms]
-            if len(chunk) > 1000:  # Минимум 1 сек
-                chunks.append(chunk)
-        
-        print(f"🎯 {len(chunks)} чанков по 60с (файл: {round(file_size/1024/1024,1)}MB)")
-        
-        # Сохраняем чанки
-        for idx, chunk in enumerate(chunks):
-            chunk_path = f"/tmp/chunk_{int(time.time())}_{idx:02d}.wav"
-            chunk.export(chunk_path, format="wav")
-            chunk_paths.append(chunk_path)
-        
-        # 🔥 ПОСЛЕДОВАТЕЛЬНАЯ обработка (1 за раз)
-        all_results = []
-        for idx, path in enumerate(chunk_paths):
-            print(f"🔄 Обрабатываем чанк {idx+1}/{len(chunk_paths)}")
-            result = await transcribe_chunk_async(path, idx)
-            all_results.append(result)
-        
-        # Результаты
-        all_transcriptions = [r["text"] for r in all_results if r["text"].strip()]
-        total_segments = sum(r["segments"] for r in all_results)
-        
-        full_transcription = " ".join(all_transcriptions).strip()
-        
-        total_time = time.time() - start
-        words = len(full_transcription.split())
-        words_per_second = round(words / total_time, 2) if total_time > 0 else 0
-        
-        print(f"✅ Готово! {words} слов за {total_time:.1f}с ({words_per_second} wps)")
-        
-        return {
-            "success": True,
-            "transcription": full_transcription,
-            "stats": {
-                "total_processing_time": round(total_time, 2),
-                "words_per_second": words_per_second,
-                "file_size_mb": round(file_size / (1024*1024), 1),
-                "chunks_processed": len(chunks),
-                "segments_count": total_segments,
-                "total_words": words,
-                "device": "cuda" if torch.cuda.is_available() else "cpu",
-                "model_size": "base"
-            },
-            "filename": original_filename
-        }
-        
-    finally:
-        # Очистка
-        for path in chunk_paths:
-            try:
-                if os.path.exists(path):
-                    os.remove(path)
-            except:
-                pass
+        # Чанки (60s для стабильности)
         try:
-            if os.path.exists(original_filepath):
-                os.remove(original_filepath)
-        except:
-            pass
-        
-        # Финальная очистка GPU
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        gc.collect()
+            audio = AudioSegment.from_file(original_filepath)
+            chunk_length_ms = 60 * 1000
+            chunks = [audio[i:i + chunk_length_ms] for i in range(0, len(audio), chunk_length_ms)]
+            
+            logger.info(f"🎯 {len(chunks)} чанков по 60s")
+            
+            # Сохраняем чанки в tmpdir
+            chunk_paths = []
+            for idx, chunk in enumerate(chunks):
+                chunk_path = os.path.join(tmpdir, f"chunk_{idx}.wav")
+                chunk.export(chunk_path, format="wav")
+                chunk_paths.append(chunk_path)
+            
+            # 🔥 ПОСЛЕДОВАТЕЛЬНАЯ обработка (без крашей!)
+            all_results = []
+            for idx, path in enumerate(chunk_paths):
+                result = await transcribe_chunk_async(path, idx)
+                logger.info(f"Чанк {idx + 1} из {len(chunk_paths)} обработан")
+                all_results.append(result)
+            
+            logger.info("Все чанки обработаны успешно")
+            # Собираем
+            all_transcriptions = [r["text"] for r in all_results if r["text"]]
+            total_segments = sum(r["segments"] for r in all_results)
+            
+            full_transcription = " ".join(all_transcriptions).strip()
+            logger.info("Транскрипция получена")
+        except Exception as e:
+            logger.error(f"Audio processing failed: {e}")
+            raise HTTPException(status_code=500, detail="Audio processing error")
+    
+    # Stats
+    total_time = time.time() - start
+    words = len(full_transcription.split())
+    words_per_second = round(words / total_time, 2) if total_time > 0 else 0
+    
+    # LLM summary
+    if full_transcription:
+        prompt = f"""Проанализируй текст из аудио разбитый на чанки по 60с. Верни summary и примерные таймкоды и попытайся выделить собеседников,
+        если это возможно. Если ничего не смог найти верни Не удалось аннотировать текст
+
+        Транскрипция: {full_transcription}
+
+        Только текст:"""
+                
+        payload = {
+            "model": os.getenv("MODEL_NAME", 'Qwen/Qwen3-8B'),
+            "messages": [
+                {"role": "system", "content": "Ты анализатор аудио-текстов. Дай summary + таймкоды."},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.57
+        }
+        logger.info('Обратились к LLM за аннотацией')
+        summary = query(payload)
+        logger.info(f'SUMMARY - {summary}')
+    else:
+        logger.warning("Модель на распознала текст возвращаем 'Нет распознанного текста'")
+        summary = "Нет распознанного текста"
+    
+    # FastAPI - в stats ДОБАВЬТЕ:
+    return {
+        "success": True,
+        "transcription": full_transcription,
+        "summary": summary,
+        "stats": {
+            "total_processing_time": round(total_time, 2),
+            "words_per_second": words_per_second,      # ✅ ДОБАВИТЬ!
+            "file_size_mb": round(file_size / (1024*1024), 1),
+            "chunks_processed": len(chunk_paths),
+            "segments_count": total_segments,          # ✅ JS ищет ЭТО
+            "total_words": words,
+        },
+        "filename": original_filename,
+        "processing_time": round(total_time, 2)    # ✅ Корневой уровень для JS
+    }
 
 
 @app.get("/api/health")
 async def health_check():
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    return {
-        "status": "ok",
-        "model": "base",
-        "device": device,
-        "framework": "FastAPI",
-        "workers": executor._max_workers,
-        "memory": torch.cuda.memory_allocated()/1024**2 if torch.cuda.is_available() else 0
-    }
-
+    return {"status": "ok", "model": "base", "version": "1.1"}
 
 if __name__ == "__main__":
-    # Предзапуск очистка
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    logger.info("API Запущен ----------")
+    uvicorn.run(app, host="127.0.0.1", port=5000, reload=False)
     
-    uvicorn.run(
-        "app:app",
-        host="127.0.0.1",
-        port=5000,
-        limit_max_requests=250*1024*1024,
-        timeout_keep_alive=600,
-        log_level="info"
-    )
