@@ -35,6 +35,7 @@ return [
             'root' => storage_path('app/private'),
             'serve' => true,
             'throw' => false,
+            'max_filesize' => 104857600,
             'report' => false,
         ],
 
