@@ -20,12 +20,6 @@ load_dotenv()
 app = FastAPI(title="Whisper AI API", version="2.0")
 
 
-
-# Инициализация модели
-model = init_model()
-executor = ThreadPoolExecutor(max_workers=1)  # 1 worker = нет OOM
-
-
 API_URL = "https://router.huggingface.co/v1/chat/completions"
 headers = {
     "Authorization": f"Bearer {os.getenv('HF_TOKEN')}",
