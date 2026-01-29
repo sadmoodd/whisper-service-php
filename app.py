@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import whisper
@@ -18,6 +18,13 @@ logger = logging.getLogger(__name__)
 load_dotenv()
 
 app = FastAPI(title="Whisper AI API", version="2.0")
+
+
+
+# Инициализация модели
+model = init_model()
+executor = ThreadPoolExecutor(max_workers=1)  # 1 worker = нет OOM
+
 
 API_URL = "https://router.huggingface.co/v1/chat/completions"
 headers = {
@@ -67,8 +74,8 @@ async def transcribe_audio(file: UploadFile = File(...)):
     if not file.filename:
         raise HTTPException(status_code=400, detail="No file selected")
     
-    if file.size > 100 * 1024 * 1024:  # 100MB
-        raise HTTPException(status_code=400, detail="File too large")
+    if file.size > 250 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 250MB)")
     
     original_filename = file.filename
     file_ext = original_filename.split('.')[-1].lower()
@@ -167,6 +174,7 @@ async def transcribe_audio(file: UploadFile = File(...)):
 @app.get("/api/health")
 async def health_check():
     return {"status": "ok", "model": "base", "version": "1.1"}
+
 
 if __name__ == "__main__":
     logger.info("API Запущен ----------")
