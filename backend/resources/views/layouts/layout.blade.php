@@ -21,14 +21,14 @@
                     <a class="navbar-brand fw-bold fs-4 text-primary" href="{{ route('whisper.index') }}">
                         <i class="bi bi-mic-fill me-2"></i>Whisper AI
                     </a>
-                    <ul class="navbar-nav ms-auto header-tabs">
+                    <!-- <ul class="navbar-nav ms-auto header-tabs">
                         <li class="nav-item">
                             <a class="nav-link" href="{{ route('whisper.about') }}"><i class="bi bi-info-circle me-1"></i>О системе</a>
                         </li>
                         <li class="nav-item">
                             <a class="nav-link" href="{{ route('whisper.help') }}"><i class="bi bi-question-circle me-1"></i>Помощь</a>
                         </li>
-                    </ul>
+                    </ul> -->
                 </div>
             </nav>
         </div>
